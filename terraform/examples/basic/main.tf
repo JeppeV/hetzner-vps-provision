@@ -55,6 +55,22 @@ output "ssh_command" {
   value = module.vps.ssh_command
 }
 
-output "ansible_inventory" {
-  value = module.vps.ansible_inventory
+output "server_name" {
+  value = module.vps.server_name
+}
+
+output "ipv4_address" {
+  value = module.vps.ipv4_address
+}
+
+output "admin_username" {
+  value = module.vps.admin_username
+}
+
+output "ssh_allowed_cidrs" {
+  value = module.vps.ssh_allowed_cidrs
+}
+
+output "ingress_rules" {
+  value = module.vps.ingress_rules
 }

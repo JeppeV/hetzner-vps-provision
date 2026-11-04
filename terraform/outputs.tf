@@ -36,23 +36,22 @@ output "firewall_id" {
   value       = hcloud_firewall.this.id
 }
 
+output "admin_username" {
+  description = "Non-root SSH administrator configured by cloud-init."
+  value       = var.admin_username
+}
+
 output "ssh_command" {
   description = "SSH command using the non-root admin account. Verify the host fingerprint through a trusted channel before connecting."
   value       = "ssh ${var.admin_username}@${hcloud_server.this.ipv4_address}"
 }
 
-output "ansible_inventory" {
-  description = "Ansible inventory for the optional hardening playbooks. Export from the calling root with terraform output -json ansible_inventory."
-  value = {
-    vps = {
-      hosts = {
-        (var.name) = {
-          ansible_host               = hcloud_server.this.ipv4_address
-          ansible_user               = var.admin_username
-          baseline_ssh_allowed_cidrs = sort(tolist(var.ssh_allowed_cidrs))
-          baseline_ingress_rules     = var.ingress_rules
-        }
-      }
-    }
-  }
+output "ssh_allowed_cidrs" {
+  description = "Sorted list of source CIDRs allowed to reach SSH on port 22."
+  value       = sort(tolist(var.ssh_allowed_cidrs))
+}
+
+output "ingress_rules" {
+  description = "Additional TCP/UDP ingress rules, preserving their ports, descriptions, and source CIDRs."
+  value       = var.ingress_rules
 }

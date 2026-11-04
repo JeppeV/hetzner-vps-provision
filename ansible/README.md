@@ -22,20 +22,56 @@ Use an SSH agent or `--private-key`; never store private keys or tokens in inven
 
 ## Inventory
 
-Forward the module output from your **calling Terraform root**:
+Assemble inventory in your **calling Terraform root** from the module's separate
+outputs. The module does not emit an `ansible_inventory` output or impose a group
+layout. For one VPS:
 
 ```hcl
 output "ansible_inventory" {
-  value = module.vps.ansible_inventory
+  value = {
+    vps = {
+      hosts = {
+        (module.vps.server_name) = {
+          ansible_host               = module.vps.ipv4_address
+          ansible_user               = module.vps.admin_username
+          baseline_ssh_allowed_cidrs = module.vps.ssh_allowed_cidrs
+          baseline_ingress_rules     = module.vps.ingress_rules
+        }
+      }
+    }
+  }
 }
 ```
 
-After a reviewed apply, export it (from `ansible/`, for the local example):
+For `module.vps` using `for_each`, use this root output instead. Each module instance
+becomes a host, keyed by its unique server name:
 
-```sh
-terraform -chdir=../terraform/examples/basic output -json ansible_inventory > inventory.json
+```hcl
+output "ansible_inventory" {
+  value = {
+    vps = {
+      hosts = {
+        for v in module.vps : v.server_name => {
+          ansible_host               = v.ipv4_address
+          ansible_user               = v.admin_username
+          baseline_ssh_allowed_cidrs = v.ssh_allowed_cidrs
+          baseline_ingress_rules     = v.ingress_rules
+        }
+      }
+    }
+  }
+}
 ```
 
+After a reviewed apply, export your root output (from `ansible/`, replacing
+`../infra` with your calling root):
+
+```sh
+terraform -chdir=../infra output -json ansible_inventory > inventory.json
+```
+
+The basic Terraform example exports the individual components; add a root output
+like the above if you want to export inventory from it.
 Re-export after address, admin, SSH-source, or ingress changes. Old address-only
 inventories lack required firewall policy. Alternatively, edit a copy of
 [inventory.example.yml](inventory.example.yml) and pass `-i inventory.yml` to commands.
@@ -77,9 +113,9 @@ ansible-playbook -i "$PWD/inventory.json" "$baseline/harden.yml" --check --diff
 
 Verify host identity first. Drop `--check` to apply; use `verify.yml` to verify.
 Keep inventory and `group_vars/vps.yml` in the caller, ignore generated inventory,
-and always pass `-i`. For `module.vps` with `for_each`, merge host maps with
-`merge([for v in module.vps : v.ansible_inventory.vps.hosts]...)` under `vps.hosts`;
-server names must be unique. Direct role callers must run `tasks/preflight.yml` first.
+and always pass `-i`. Build the root inventory output using the
+[single- or multi-VPS example](#inventory) above.
+Direct role callers must run `tasks/preflight.yml` first.
 
 ## Configuration and safety
 

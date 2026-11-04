@@ -77,6 +77,16 @@ run "secure_defaults" {
     condition     = yamldecode(local.user_data).users[1].name == "admin" && yamldecode(local.user_data).ssh_pwauth == false
     error_message = "Rendered cloud-init must be valid YAML and preserve the security settings."
   }
+
+  assert {
+    condition = (
+      output.server_name == var.name &&
+      output.admin_username == "admin" &&
+      output.ssh_allowed_cidrs == sort(tolist(var.ssh_allowed_cidrs)) &&
+      output.ingress_rules == var.ingress_rules && length(output.ingress_rules) == 0
+    )
+    error_message = "Separate outputs must expose the server name, default admin, sorted SSH sources, and empty default ingress policy."
+  }
 }
 
 run "key_only_bootstrap_without_vendor_data" {
@@ -141,8 +151,8 @@ run "ipv4_only_with_application_rule" {
   }
 
   assert {
-    condition     = output.ansible_inventory.vps.hosts["test-vps"].baseline_ingress_rules == var.ingress_rules
-    error_message = "Guest firewall inventory must preserve the cloud firewall ingress policy."
+    condition     = output.ingress_rules == var.ingress_rules
+    error_message = "The ingress output must preserve the cloud firewall policy for caller-owned guest inventory."
   }
 }
 
@@ -185,12 +195,48 @@ run "bootstrap_extensions" {
   }
 
   assert {
-    condition = output.ansible_inventory.vps.hosts["test-vps"].ansible_user == "operator" && (
-      keys(output.ansible_inventory.vps.hosts) == ["test-vps"] &&
-      keys(output.ansible_inventory.vps.hosts["test-vps"]) == ["ansible_host", "ansible_user", "baseline_ingress_rules", "baseline_ssh_allowed_cidrs"] &&
-      toset(output.ansible_inventory.vps.hosts["test-vps"].baseline_ssh_allowed_cidrs) == var.ssh_allowed_cidrs
+    condition     = output.admin_username == "operator" && output.ssh_allowed_cidrs == sort(tolist(var.ssh_allowed_cidrs))
+    error_message = "Separate outputs must preserve the configured admin and SSH sources for caller-owned inventory."
+  }
+}
+
+run "connection_and_policy_outputs" {
+  command = plan
+
+  variables {
+    name              = "second-vps"
+    admin_username    = "deployer"
+    ssh_allowed_cidrs = ["2001:db8::20/128", "203.0.113.20/32", "192.0.2.20/32"]
+    ingress_rules = [
+      {
+        description  = "Public HTTPS"
+        protocol     = "tcp"
+        port         = "443"
+        source_cidrs = ["0.0.0.0/0", "::/0"]
+      },
+      {
+        description  = "Private UDP range"
+        protocol     = "udp"
+        port         = "8000-8010"
+        source_cidrs = ["203.0.113.0/24"]
+      },
+    ]
+  }
+
+  assert {
+    condition = (
+      output.server_name == "second-vps" &&
+      output.admin_username == "deployer"
     )
-    error_message = "Ansible inventory must expose connection and guest-firewall policy fields, preserving the admin and SSH sources."
+    error_message = "Connection outputs must expose this instance's server name and configured admin independently."
+  }
+
+  assert {
+    condition = (
+      output.ssh_allowed_cidrs == tolist(["192.0.2.20/32", "2001:db8::20/128", "203.0.113.20/32"]) &&
+      output.ingress_rules == var.ingress_rules
+    )
+    error_message = "Policy outputs must sort SSH sources and preserve all ingress rules, source CIDRs, and port ranges."
   }
 }
 

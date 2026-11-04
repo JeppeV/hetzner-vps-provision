@@ -49,8 +49,15 @@ For a local deployment, use [examples/basic](examples/basic): copy
 ## Configuration
 
 See [variables.tf](variables.tf) for inputs and [outputs.tf](outputs.tf) for outputs,
-including addresses, resource IDs, `ssh_command`, and `ansible_inventory`.
+including addresses, resource IDs, `ssh_command`, `admin_username`,
+`ssh_allowed_cidrs`, and `ingress_rules`.
 Defaults: admin `admin`, IPv6/backups enabled, deletion protection disabled.
+
+Access outputs as `module.vps.ipv4_address`, for example. Re-export values in the
+calling root to expose them through `terraform output`. The module no longer emits
+`ansible_inventory`; callers compose inventory from the separate outputs for one
+or multiple VPSs. See [inventory examples](../ansible/README.md#inventory).
+This output-only change does not alter infrastructure or cloud-init.
 
 - SSH sources must be explicit CIDRs, never `/0`; IPv4-only servers need an IPv4 source.
 - `ingress_rules` accepts TCP/UDP ports or ranges (`8000-8010`), explicit source CIDRs,
