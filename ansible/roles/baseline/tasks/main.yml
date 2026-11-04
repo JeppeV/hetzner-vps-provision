@@ -1,0 +1,92 @@
+---
+- name: Validate baseline inputs before changing packages or services
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Ensure the baseline packages are installed without a distribution upgrade
+  ansible.builtin.apt:
+    name: >-
+      {{ ['openssh-server', 'sudo', 'unattended-upgrades']
+         + (['ufw'] if baseline_manage_ufw else [])
+         + (['fail2ban', 'python3-systemd', 'nftables'] if baseline_manage_fail2ban else []) }}
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 300
+    # New daemons must not start with unvalidated distro defaults.
+    policy_rc_d: 101
+
+- name: Keep root and admin passwords locked without changing their SSH keys
+  ansible.builtin.user:
+    name: "{{ item }}"
+    password_lock: true
+  loop:
+    - root
+    - "{{ ansible_user }}"
+
+- name: Maintain SSH policy with validation and rollback
+  ansible.builtin.import_tasks: ssh.yml
+
+- name: Maintain the defense-in-depth guest firewall
+  ansible.builtin.import_tasks: ufw.yml
+  when: baseline_manage_ufw
+
+- name: Maintain SSH failure banning
+  ansible.builtin.import_tasks: fail2ban.yml
+  when: baseline_manage_fail2ban
+
+- name: Maintain unattended updates without automatic reboots
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - src: auto-upgrades.conf
+      dest: /etc/apt/apt.conf.d/20auto-upgrades
+    - src: unattended-upgrades.conf
+      dest: /etc/apt/apt.conf.d/52vps-unattended-upgrades
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Enable and start the daily update timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+
+- name: Create the journald configuration directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create persistent journal storage
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2755"
+  notify: Apply journal configuration
+
+- name: Bound persistent journal disk usage
+  ansible.builtin.template:
+    src: journald.conf.j2
+    dest: /etc/systemd/journald.conf.d/60-vps-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply journal configuration
+
+- name: Apply service changes before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the applied baseline
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

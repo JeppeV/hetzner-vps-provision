@@ -1,0 +1,34 @@
+name: Ansible
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    env:
+      ANSIBLE_CONFIG: ${{ github.workspace }}/ansible/ansible.cfg
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ansible/requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: ansible-galaxy collection install -r requirements.yml
+      - run: ansible-lint --project-dir .
+      - run: ansible-inventory -i inventory.example.yml --list
+      - run: ansible-playbook -i inventory.example.yml harden.yml --syntax-check
+      - run: ansible-playbook -i inventory.example.yml verify.yml --syntax-check
+      - run: ansible-playbook -i localhost, tests/render.yml --check
+      - run: ansible-playbook -i localhost, tests/reboot-check.yml --check
+      - run: python -m unittest discover -s tests -p 'test_*.py'

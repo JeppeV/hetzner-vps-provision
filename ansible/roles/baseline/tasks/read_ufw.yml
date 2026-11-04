@@ -1,0 +1,23 @@
+---
+- name: Read both address families of persisted UFW user rules
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop:
+    - /etc/ufw/user.rules
+    - /etc/ufw/user6.rules
+  register: baseline_ufw_user_files
+
+- name: Inspect managed and unexpected UFW rules
+  ansible.builtin.set_fact:
+    baseline_ufw_existing: >-
+      {{ baseline_ufw_user_files.results | map(attribute='content') | map('b64decode')
+         | join('\n') | baseline_ufw_rules }}
+
+- name: Refuse to silently adopt or delete unrelated permissive firewall rules
+  ansible.builtin.assert:
+    that:
+      - baseline_ufw_existing.unmanaged | length == 0
+    fail_msg: >-
+      UFW contains unmanaged permissive rules: {{ baseline_ufw_existing.unmanaged }}.
+      Review them with console access, migrate needed ingress into Terraform/inventory,
+      and remove the old rules explicitly. The baseline never resets UFW.

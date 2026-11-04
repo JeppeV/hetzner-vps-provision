@@ -1,0 +1,19 @@
+---
+baseline_journal_max_use: 256M
+baseline_journal_keep_free: 512M
+
+# Only harden.yml consumes this opt-in after successful baseline verification.
+baseline_reboot_if_required: false
+
+# These switches relinquish management; they do not disable existing protection.
+baseline_manage_ufw: true
+baseline_manage_fail2ban: true
+
+# Exported by Terraform; manual inventories must supply their SSH sources.
+baseline_ssh_allowed_cidrs: []
+baseline_ingress_rules: []
+
+baseline_fail2ban_bantime: 600
+baseline_fail2ban_findtime: 600
+baseline_fail2ban_maxretry: 5
+baseline_fail2ban_ignore_cidrs: []

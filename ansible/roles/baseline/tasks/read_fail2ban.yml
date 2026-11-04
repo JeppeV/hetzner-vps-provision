@@ -1,0 +1,24 @@
+---
+- name: Read the complete effective fail2ban configuration without starting it
+  ansible.builtin.command:
+    argv:
+      - fail2ban-client
+      - -d
+  register: baseline_fail2ban_dump
+  changed_when: false
+  check_mode: false
+
+- name: Inspect the effective SSH jail rather than just the managed file
+  ansible.builtin.set_fact:
+    baseline_fail2ban_effective: "{{ baseline_fail2ban_dump.stdout | baseline_fail2ban_policy }}"
+
+- name: Reject overridden or disabled SSH banning policy
+  ansible.builtin.assert:
+    that:
+      - baseline_fail2ban_effective.backend | default('') == 'systemd'
+      - baseline_fail2ban_effective.bantime | default(0) == baseline_fail2ban_bantime
+      - baseline_fail2ban_effective.findtime | default(0) == baseline_fail2ban_findtime
+      - baseline_fail2ban_effective.maxretry | default(0) == baseline_fail2ban_maxretry
+      - baseline_fail2ban_effective.actions == ['nftables-multiport']
+      - baseline_fail2ban_effective.ignored_sources == baseline_fail2ban_ignored_sources
+    fail_msg: Inspect other jail files and later overrides; the effective SSH jail differs from the baseline.

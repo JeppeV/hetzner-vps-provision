@@ -1,0 +1,35 @@
+---
+- name: Require explicit network-management switches
+  ansible.builtin.assert:
+    that:
+      - baseline_manage_ufw is boolean
+      - baseline_manage_fail2ban is boolean
+
+- name: Normalize the intended guest firewall policy
+  ansible.builtin.set_fact:
+    baseline_firewall_rules: "{{ baseline_ssh_allowed_cidrs | baseline_firewall_policy(baseline_ingress_rules) }}"
+  when: baseline_manage_ufw
+
+- name: Refuse a firewall policy that would exclude the management connection
+  ansible.builtin.assert:
+    that:
+      - baseline_ssh_connection[3] == '22'
+      - baseline_ssh_connection[0] | baseline_address_allowed(baseline_ssh_allowed_cidrs)
+    fail_msg: >-
+      UFW requires management on port 22 from an explicitly allowed SSH CIDR.
+      Re-export Terraform inventory or correct the manual inventory before proceeding.
+  when: baseline_manage_ufw
+
+- name: Validate fail2ban limits
+  ansible.builtin.assert:
+    that:
+      - baseline_fail2ban_bantime is integer and baseline_fail2ban_bantime > 0
+      - baseline_fail2ban_findtime is integer and baseline_fail2ban_findtime > 0
+      - baseline_fail2ban_maxretry is integer and baseline_fail2ban_maxretry > 0
+    fail_msg: Fail2ban times (seconds) and retry count must be positive integers.
+  when: baseline_manage_fail2ban
+
+- name: Normalize additional fail2ban exemptions
+  ansible.builtin.set_fact:
+    baseline_fail2ban_ignored_sources: "{{ baseline_ssh_connection[0] | baseline_fail2ban_ignore_sources(baseline_fail2ban_ignore_cidrs) }}"
+  when: baseline_manage_fail2ban

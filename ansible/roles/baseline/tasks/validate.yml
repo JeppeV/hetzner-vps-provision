@@ -1,0 +1,16 @@
+---
+- name: Require an explicit boolean for post-hardening reboots
+  ansible.builtin.assert:
+    that:
+      - baseline_reboot_if_required is boolean
+    fail_msg: Set baseline_reboot_if_required to a YAML/JSON boolean, not a string.
+
+- name: Validate journal storage limits
+  ansible.builtin.assert:
+    that:
+      - baseline_journal_max_use is match('^[1-9][0-9]*[KMG]$')
+      - baseline_journal_keep_free is match('^[1-9][0-9]*[KMG]$')
+    fail_msg: Journal limits must be positive sizes such as 256M or 1G.
+
+- name: Validate the declared network policy
+  ansible.builtin.import_tasks: network_policy.yml

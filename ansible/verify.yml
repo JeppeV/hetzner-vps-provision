@@ -1,0 +1,17 @@
+---
+- name: Verify the Ubuntu VPS security baseline without changing it
+  hosts: vps
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: Check the host and wait for bootstrap
+      ansible.builtin.import_tasks: tasks/preflight.yml
+
+  tasks:
+    - name: Inspect the configured baseline
+      ansible.builtin.import_role:
+        name: baseline
+        tasks_from: verify

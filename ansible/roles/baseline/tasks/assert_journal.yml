@@ -1,0 +1,13 @@
+---
+- name: Verify later drop-ins have not overridden the journal limits
+  ansible.builtin.assert:
+    that:
+      - >-
+        baseline_journal_effective.stdout | regex_findall('(?m)^\s*Storage\s*=\s*([^\n]*)')
+        | map('trim') | list | last == 'persistent'
+      - >-
+        baseline_journal_effective.stdout | regex_findall('(?m)^\s*SystemMaxUse\s*=\s*([^\n]*)')
+        | map('trim') | list | last == baseline_journal_max_use
+      - >-
+        baseline_journal_effective.stdout | regex_findall('(?m)^\s*SystemKeepFree\s*=\s*([^\n]*)')
+        | map('trim') | list | last == baseline_journal_keep_free

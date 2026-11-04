@@ -1,0 +1,27 @@
+---
+- name: Check for an opted-in reboot after successful hardening
+  when:
+    - baseline_reboot_if_required
+    - not ansible_check_mode
+  block:
+    - name: Recheck whether Ubuntu requests a reboot
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: baseline_post_hardening_reboot_required
+
+    - name: Reboot and verify only when Ubuntu requests it
+      when: baseline_post_hardening_reboot_required.stat.exists
+      block:
+        - name: Reboot and wait for authenticated access to return
+          ansible.builtin.reboot:
+            msg: Reboot requested after successful Ansible hardening.
+            reboot_timeout: 600
+            post_reboot_delay: 15
+
+        - name: Check readiness again after reboot
+          ansible.builtin.import_tasks: preflight.yml
+
+        - name: Verify the baseline again after reboot
+          ansible.builtin.import_role:
+            name: baseline
+            tasks_from: verify

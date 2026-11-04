@@ -1,0 +1,31 @@
+---
+- name: Reload SSH
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    state: reloaded
+  when: not ansible_check_mode
+  listen: Apply SSH configuration
+
+- name: Reconnect after applying SSH configuration
+  ansible.builtin.include_tasks: ../tasks/reconnect.yml
+  when: not ansible_check_mode
+  listen: Apply SSH configuration
+
+- name: Restart journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald.service
+    state: restarted
+  listen: Apply journal configuration
+
+- name: Reload guest firewall
+  community.general.ufw:
+    state: reloaded
+  when: not ansible_check_mode
+
+- name: Flush volatile journals to persistent storage
+  ansible.builtin.command:
+    argv:
+      - journalctl
+      - --flush
+  changed_when: true
+  listen: Apply journal configuration

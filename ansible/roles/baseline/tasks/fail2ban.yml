@@ -1,0 +1,67 @@
+---
+- name: Install and validate the SSH jail before restarting fail2ban
+  when: not ansible_check_mode
+  block:
+    - name: Maintain a journal-backed SSH jail with an independent nftables ban action
+      ansible.builtin.template:
+        src: fail2ban.local.j2
+        dest: /etc/fail2ban/jail.d/99-vps-hardening.local
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      register: baseline_fail2ban_template
+
+    - name: Validate the complete fail2ban configuration
+      ansible.builtin.command:
+        argv:
+          - fail2ban-client
+          - --test
+      changed_when: false
+
+    - name: Check effective jail settings before restarting
+      ansible.builtin.include_tasks: read_fail2ban.yml
+
+  rescue:
+    - name: Restore the previous jail if configuration validation failed
+      ansible.builtin.copy:
+        src: "{{ baseline_fail2ban_template.backup_file }}"
+        dest: /etc/fail2ban/jail.d/99-vps-hardening.local
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: baseline_fail2ban_template.backup_file is defined
+
+    - name: Remove a newly created jail if configuration validation failed
+      ansible.builtin.file:
+        path: /etc/fail2ban/jail.d/99-vps-hardening.local
+        state: absent
+      when:
+        - baseline_fail2ban_template is changed
+        - baseline_fail2ban_template.backup_file is not defined
+
+    - name: Stop without restarting an invalid fail2ban configuration
+      ansible.builtin.fail:
+        msg: Fail2ban validation failed; the changed jail was rolled back without restarting the service.
+
+- name: Enable fail2ban and restart only after validated configuration changes
+  ansible.builtin.systemd_service:
+    name: fail2ban.service
+    enabled: true
+    state: "{{ 'restarted' if baseline_fail2ban_template is changed else 'started' }}"
+  register: baseline_fail2ban_service
+  when: not ansible_check_mode
+
+- name: Test a fresh management connection after fail2ban service changes
+  ansible.builtin.include_tasks: reconnect.yml
+  when:
+    - not ansible_check_mode
+    - baseline_fail2ban_service is changed
+
+- name: Explain the limits of fail2ban check mode
+  ansible.builtin.debug:
+    msg: >-
+      Fail2ban settings passed inventory validation. Check mode does not install,
+      write or validate the full jail configuration, start services, or test bans.
+  when: ansible_check_mode

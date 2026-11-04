@@ -1,0 +1,125 @@
+---
+- name: Validate baseline inputs before verification
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Verify effective SSH hardening
+  ansible.builtin.import_tasks: verify_ssh.yml
+
+- name: Verify the guest firewall and SSH failure banning
+  ansible.builtin.import_tasks: verify_network.yml
+
+- name: Read root and admin password status
+  ansible.builtin.command:
+    argv:
+      - passwd
+      - -S
+      - "{{ item }}"
+  loop:
+    - root
+    - "{{ ansible_user }}"
+  register: baseline_password_status
+  changed_when: false
+  check_mode: false
+
+- name: Verify root and admin passwords remain locked
+  ansible.builtin.assert:
+    that:
+      - item.stdout.split()[1] == 'L'
+    fail_msg: "The password for {{ item.item }} is not locked."
+  loop: "{{ baseline_password_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Read effective APT configuration
+  ansible.builtin.command:
+    argv:
+      - apt-config
+      - dump
+  register: baseline_apt_config
+  changed_when: false
+  check_mode: false
+
+- name: Verify automatic updates are enabled and automatic reboots are disabled
+  ansible.builtin.assert:
+    that:
+      - "'APT::Periodic::Update-Package-Lists \"1\";' in baseline_apt_config.stdout_lines"
+      - "'APT::Periodic::Unattended-Upgrade \"1\";' in baseline_apt_config.stdout_lines"
+      - "'Unattended-Upgrade::Automatic-Reboot \"false\";' in baseline_apt_config.stdout_lines"
+
+- name: Verify update timers are enabled
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - "{{ item }}"
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  register: baseline_timer_enablement
+  changed_when: false
+  check_mode: false
+
+- name: Verify update timers are persistently enabled for future boots
+  ansible.builtin.assert:
+    that:
+      - item.stdout == 'enabled'
+  loop: "{{ baseline_timer_enablement.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Verify update timers and journald are active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - "{{ item }}"
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - systemd-journald.service
+  changed_when: false
+  check_mode: false
+
+- name: Inspect persistent journal storage
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: baseline_journal_directory
+
+- name: Verify persistent journal storage exists
+  ansible.builtin.assert:
+    that:
+      - baseline_journal_directory.stat.isdir | default(false)
+
+- name: Read the managed journal policy
+  ansible.builtin.slurp:
+    src: /etc/systemd/journald.conf.d/60-vps-hardening.conf
+  register: baseline_journal_config
+
+- name: Verify the managed journal policy has not drifted
+  ansible.builtin.assert:
+    that:
+      - baseline_journal_config.content | b64decode == lookup('ansible.builtin.template', 'journald.conf.j2')
+
+- name: Read the merged journald configuration
+  ansible.builtin.command:
+    argv:
+      - systemd-analyze
+      - cat-config
+      - systemd/journald.conf
+  register: baseline_journal_effective
+  changed_when: false
+  check_mode: false
+
+- name: Check the effective journal policy against the baseline
+  ansible.builtin.import_tasks: assert_journal.yml
+
+- name: Check whether updates require a reboot
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: baseline_reboot_required
+
+- name: Report maintenance needs
+  ansible.builtin.debug:
+    msg: >-
+      Reboot required: {{ baseline_reboot_required.stat.exists }}.
+      Reboots are opt-in through harden.yml; verification does not reboot.

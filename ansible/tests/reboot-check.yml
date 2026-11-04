@@ -1,0 +1,24 @@
+---
+- name: Test the opted-in reboot path is skipped in check mode without a VPS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_user: operator
+    baseline_reboot_if_required: true
+
+  tasks:
+    - name: Require check mode before importing any reboot tasks locally
+      ansible.builtin.assert:
+        that:
+          - ansible_check_mode
+        fail_msg: Run this test with --check; it must never request a real reboot.
+
+    - name: Exercise the actual post-hardening task import in check mode
+      ansible.builtin.import_tasks: ../tasks/reboot.yml
+
+    - name: Verify check mode skipped even the post-hardening reboot-marker read
+      ansible.builtin.assert:
+        that:
+          - baseline_post_hardening_reboot_required is skipped
+          - baseline_post_hardening_reboot_required.stat is not defined

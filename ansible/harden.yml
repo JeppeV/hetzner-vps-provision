@@ -1,0 +1,18 @@
+---
+- name: Maintain the Ubuntu VPS security baseline
+  hosts: vps
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+
+  pre_tasks:
+    - name: Check the host and wait for bootstrap
+      ansible.builtin.import_tasks: tasks/preflight.yml
+
+  roles:
+    - baseline
+
+  post_tasks:
+    - name: Handle an explicitly requested post-hardening reboot
+      ansible.builtin.import_tasks: tasks/reboot.yml

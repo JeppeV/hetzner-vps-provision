@@ -1,0 +1,46 @@
+---
+- name: Install and validate the SSH drop-in before reloading
+  block:
+    - name: Maintain the first-matching SSH policy
+      ansible.builtin.template:
+        src: sshd.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-vps-hardening.conf
+        owner: root
+        group: root
+        mode: "0600"
+        backup: true
+        validate: /usr/sbin/sshd -t -f %s
+      register: baseline_ssh_template
+      notify: Apply SSH configuration
+
+    - name: Validate the full configuration and effective management policy
+      ansible.builtin.include_tasks: verify_ssh.yml
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Restore the previous drop-in if validation failed
+      ansible.builtin.copy:
+        src: "{{ baseline_ssh_template.backup_file }}"
+        dest: /etc/ssh/sshd_config.d/00-vps-hardening.conf
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+      when: baseline_ssh_template.backup_file is defined
+
+    - name: Remove a newly created drop-in if validation failed
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-vps-hardening.conf
+        state: absent
+      when:
+        - baseline_ssh_template is changed
+        - baseline_ssh_template.backup_file is not defined
+
+    - name: Stop without reloading an unverified SSH configuration
+      ansible.builtin.fail:
+        msg: >-
+          SSH validation failed; any changed drop-in was rolled back. Inspect other SSH
+          configuration and recover through the Hetzner console if necessary.
+
+- name: Reload validated SSH policy and test a fresh authenticated connection
+  ansible.builtin.meta: flush_handlers

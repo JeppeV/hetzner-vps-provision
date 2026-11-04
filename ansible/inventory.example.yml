@@ -1,0 +1,10 @@
+---
+vps:
+  hosts:
+    example-vps:
+      ansible_host: 203.0.113.10 # Replace with the server's real address.
+      ansible_user: admin # Must match Terraform's admin_username.
+      # Must match Terraform's SSH sources, including the controller's public IP.
+      baseline_ssh_allowed_cidrs:
+        - 203.0.113.20/32
+      baseline_ingress_rules: []

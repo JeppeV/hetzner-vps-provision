@@ -1,0 +1,131 @@
+---
+- name: Verify the guest firewall without changing it
+  when: baseline_manage_ufw
+  block:
+    - name: Inspect persisted UFW rules
+      ansible.builtin.import_tasks: read_ufw.yml
+
+    - name: Verify baseline rules have not drifted for either address family
+      ansible.builtin.assert:
+        that:
+          - baseline_ufw_existing.managed | difference(baseline_firewall_rules) | length == 0
+          - baseline_firewall_rules | difference(baseline_ufw_existing.managed) | length == 0
+
+    - name: Read UFW filtering status and default policy
+      ansible.builtin.command:
+        argv:
+          - ufw
+          - status
+          - verbose
+      environment:
+        LC_ALL: C
+      register: baseline_ufw_status
+      changed_when: false
+      check_mode: false
+
+    - name: Verify the firewall is active with default-deny ingress and forwarding
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in baseline_ufw_status.stdout_lines"
+          - "baseline_ufw_status.stdout is search('Default: deny \\(incoming\\), allow \\(outgoing\\), (deny|disabled) \\(routed\\)')"
+
+    - name: Read the UFW IPv6 and boot settings
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /etc/default/ufw
+        - /etc/ufw/ufw.conf
+      register: baseline_ufw_settings
+
+    - name: Verify IPv6 filtering and firewall persistence
+      ansible.builtin.assert:
+        that:
+          - "'IPV6=yes' in (baseline_ufw_settings.results[0].content | b64decode).splitlines()"
+          - >-
+            baseline_ufw_settings.results[0].content | b64decode
+            is search('(?m)^DEFAULT_FORWARD_POLICY="?DROP"?$')
+          - "'ENABLED=yes' in (baseline_ufw_settings.results[1].content | b64decode).splitlines()"
+
+- name: Verify SSH failure banning without changing it
+  when: baseline_manage_fail2ban
+  block:
+    - name: Inspect the effective fail2ban policy
+      ansible.builtin.import_tasks: read_fail2ban.yml
+
+    - name: Verify fail2ban is persistently enabled
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - fail2ban.service
+      register: baseline_fail2ban_enablement
+      changed_when: false
+      check_mode: false
+
+    - name: Verify fail2ban starts on future boots
+      ansible.builtin.assert:
+        that:
+          - baseline_fail2ban_enablement.stdout == 'enabled'
+
+    - name: Verify the SSH jail is running
+      ansible.builtin.command:
+        argv:
+          - fail2ban-client
+          - status
+          - sshd
+      register: baseline_fail2ban_status
+      retries: 5
+      delay: 2
+      until: baseline_fail2ban_status.rc == 0
+      changed_when: false
+      check_mode: false
+
+    - name: Read the running jail's retry and ban limits
+      ansible.builtin.command:
+        argv:
+          - fail2ban-client
+          - get
+          - sshd
+          - "{{ item.name }}"
+      loop:
+        - name: bantime
+          value: "{{ baseline_fail2ban_bantime }}"
+        - name: findtime
+          value: "{{ baseline_fail2ban_findtime }}"
+        - name: maxretry
+          value: "{{ baseline_fail2ban_maxretry }}"
+      register: baseline_fail2ban_runtime
+      changed_when: false
+      check_mode: false
+
+    - name: Verify running limits match the declared policy
+      ansible.builtin.assert:
+        that:
+          - item.stdout == (item.item.value | string)
+      loop: "{{ baseline_fail2ban_runtime.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Read the running journal filter and ban action
+      ansible.builtin.command:
+        argv:
+          - fail2ban-client
+          - get
+          - sshd
+          - "{{ item }}"
+      loop:
+        - journalmatch
+        - actions
+        - ignoreip
+      register: baseline_fail2ban_runtime_policy
+      changed_when: false
+      check_mode: false
+
+    - name: Verify the running jail watches SSH journals and uses nftables bans
+      ansible.builtin.assert:
+        that:
+          - "'sshd' in baseline_fail2ban_runtime_policy.results[0].stdout"
+          - baseline_fail2ban_runtime_policy.results[1].stdout_lines[-1] == 'nftables-multiport'
+          - >-
+            baseline_fail2ban_runtime_policy.results[2].stdout
+            | baseline_fail2ban_runtime_sources == baseline_fail2ban_ignored_sources

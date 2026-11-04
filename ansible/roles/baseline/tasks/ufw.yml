@@ -1,0 +1,79 @@
+---
+- name: Reconcile the live guest firewall only outside check mode
+  when: not ansible_check_mode
+  block:
+    - name: Inspect existing firewall ownership before changing rules
+      ansible.builtin.import_tasks: read_ufw.yml
+
+    - name: Keep IPv6 filtering enabled even on IPv4-only public servers
+      ansible.builtin.lineinfile:
+        path: /etc/default/ufw
+        regexp: '^IPV6='
+        line: IPV6=yes
+      notify: Reload guest firewall
+      register: baseline_ufw_ipv6
+
+    # Add the new SSH sources before removing old rules or enabling default-deny.
+    - name: Add the intended SSH and ingress rules for their explicit address families
+      community.general.ufw:
+        rule: allow
+        direction: in
+        proto: "{{ item.protocol }}"
+        port: "{{ item.port }}"
+        from_ip: "{{ item.source }}"
+        to_ip: "{{ item.destination }}"
+        comment: vps-baseline
+      loop: "{{ baseline_firewall_rules }}"
+      loop_control:
+        label: "{{ item.source }} -> {{ item.port }}/{{ item.protocol }}"
+      register: baseline_ufw_allowed
+
+    - name: Remove obsolete baseline rules without clearing dynamic bans or unrelated denies
+      community.general.ufw:
+        rule: allow
+        direction: in
+        proto: "{{ item.protocol }}"
+        port: "{{ item.port }}"
+        from_ip: "{{ item.source }}"
+        to_ip: "{{ item.destination }}"
+        comment: vps-baseline
+        delete: true
+      loop: "{{ baseline_ufw_existing.managed | difference(baseline_firewall_rules) }}"
+      loop_control:
+        label: "{{ item.source }} -> {{ item.port }}/{{ item.protocol }}"
+      register: baseline_ufw_removed
+
+    - name: Default-deny incoming and forwarded traffic while allowing outgoing traffic
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        default: "{{ item.policy }}"
+      loop:
+        - direction: incoming
+          policy: deny
+        - direction: outgoing
+          policy: allow
+        - direction: routed
+          policy: deny
+      register: baseline_ufw_defaults
+
+    - name: Enable the guest firewall after installing its allow rules
+      community.general.ufw:
+        state: enabled
+        logging: low
+      register: baseline_ufw_enabled
+
+    - name: Apply IPv6 filtering changes before checking access
+      ansible.builtin.meta: flush_handlers
+
+    - name: Test a fresh management connection after firewall changes
+      ansible.builtin.include_tasks: reconnect.yml
+      when: >-
+        baseline_ufw_ipv6 is changed or baseline_ufw_allowed is changed or
+        baseline_ufw_removed is changed or baseline_ufw_defaults is changed or baseline_ufw_enabled is changed
+
+- name: Explain the limits of firewall check mode
+  ansible.builtin.debug:
+    msg: >-
+      UFW policy and management-source validation passed. Check mode does not install,
+      enable, prune, or test the proposed live firewall; review baseline_ingress_rules too.
+  when: ansible_check_mode

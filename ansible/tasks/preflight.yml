@@ -1,0 +1,50 @@
+---
+- name: Wait for authenticated SSH access
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+    sleep: 5
+  become: false
+  check_mode: false
+
+- name: Gather the operating system and SSH connection facts as the admin
+  ansible.builtin.setup:
+    gather_subset:
+      - min
+  become: false
+
+- name: Require the module's supported OS and existing non-root SSH admin
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version == '24.04'
+      - ansible_user is defined
+      - ansible_user is match('^[a-z][a-z0-9_-]{0,30}$')
+      - ansible_user != 'root'
+      - ansible_facts.user_id == ansible_user
+      - ansible_facts.env.SSH_CONNECTION is defined
+      - ansible_facts.env.SSH_CONNECTION.split() | length == 4
+    fail_msg: Use SSH as the module's non-root admin on Ubuntu 24.04; local and root connections are not supported.
+
+- name: Record the current management connection for effective SSH checks
+  ansible.builtin.set_fact:
+    baseline_ssh_connection: "{{ ansible_facts.env.SSH_CONNECTION.split() }}"
+
+- name: Wait for cloud-init to finish successfully
+  ansible.builtin.command:
+    argv:
+      - cloud-init
+      - status
+      - --wait
+  changed_when: false
+  check_mode: false
+  timeout: 900
+
+- name: Verify passwordless administrative access
+  ansible.builtin.command:
+    argv:
+      - sudo
+      - -n
+      - "true"
+  become: false
+  changed_when: false
+  check_mode: false

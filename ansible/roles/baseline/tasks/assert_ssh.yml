@@ -1,0 +1,23 @@
+---
+- name: Reject overridden or ineffective SSH hardening
+  ansible.builtin.assert:
+    that:
+      - baseline_sshd_expected | difference(item.stdout_lines) | length == 0
+    fail_msg: >-
+      SSH policy differs from the baseline for {{ item.item }}. Inspect earlier directives
+      and Match blocks; SSH has not been reloaded by this check.
+  vars:
+    baseline_sshd_expected:
+      - permitrootlogin no
+      - passwordauthentication no
+      - kbdinteractiveauthentication no
+      - pubkeyauthentication yes
+      - authenticationmethods publickey
+      - "allowusers {{ ansible_user }}"
+      - permitemptypasswords no
+      - x11forwarding no
+      - allowagentforwarding no
+      - maxauthtries 3
+  loop: "{{ baseline_sshd_effective.results }}"
+  loop_control:
+    label: "{{ item.item }}"

@@ -1,0 +1,27 @@
+---
+- name: Validate the complete SSH configuration
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -t
+  changed_when: false
+  check_mode: false
+
+- name: Read effective SSH policy for admin and root on the management connection
+  ansible.builtin.command:
+    argv:
+      - /usr/sbin/sshd
+      - -T
+      - -C
+      - >-
+        user={{ item }},host={{ baseline_ssh_connection[0] }},addr={{ baseline_ssh_connection[0]
+        }},laddr={{ baseline_ssh_connection[2] }},lport={{ baseline_ssh_connection[3] }}
+  loop:
+    - "{{ ansible_user }}"
+    - root
+  register: baseline_sshd_effective
+  changed_when: false
+  check_mode: false
+
+- name: Check the effective SSH policy against the baseline
+  ansible.builtin.import_tasks: assert_ssh.yml

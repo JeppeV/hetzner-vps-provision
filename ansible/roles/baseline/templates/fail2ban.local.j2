@@ -1,0 +1,11 @@
+# Managed by Ansible. Ban only SSH failures; do not change other jail definitions.
+[sshd]
+enabled = true
+backend = systemd
+port = 22
+banaction = nftables-multiport
+bantime = {{ baseline_fail2ban_bantime }}
+findtime = {{ baseline_fail2ban_findtime }}
+maxretry = {{ baseline_fail2ban_maxretry }}
+# Always exempt the current controller to avoid banning Ansible during retries.
+ignoreip = {{ baseline_fail2ban_ignored_sources | join(' ') }}

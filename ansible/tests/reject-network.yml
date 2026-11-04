@@ -1,0 +1,20 @@
+---
+- name: Expect a management-excluding firewall policy to fail before any guest changes
+  block:
+    - name: Validate a deliberately unsafe management connection
+      ansible.builtin.include_role:
+        name: baseline
+        tasks_from: network_policy
+      vars:
+        baseline_ssh_connection: "{{ baseline_test_connection }}"
+
+    - name: Fail if a lockout-prone policy was accepted
+      ansible.builtin.fail:
+        msg: The management-source guard should have rejected this fixture.
+
+  rescue:
+    - name: Confirm failure came from the management-source guard
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == 'Refuse a firewall policy that would exclude the management connection'
+          - ansible_failed_task.action == 'ansible.builtin.assert'

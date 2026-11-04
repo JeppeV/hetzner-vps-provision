@@ -1,0 +1,150 @@
+---
+- name: Test baseline configuration locally without a VPS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_user: operator
+    baseline_journal_max_use: 128M
+    baseline_journal_keep_free: 1G
+    baseline_templates: "{{ playbook_dir }}/../roles/baseline/templates"
+    baseline_files: "{{ playbook_dir }}/../roles/baseline/files"
+    baseline_ssh_connection: ['203.0.113.20', '50000', '203.0.113.10', '22']
+    baseline_ssh_allowed_cidrs: ['203.0.113.20/32', '2001:db8::20/128']
+    baseline_ingress_rules:
+      - protocol: tcp
+        port: '443'
+        source_cidrs: ['0.0.0.0/0', '::/0']
+      - protocol: udp
+        port: '8000-8010'
+        source_cidrs: ['203.0.113.0/24']
+
+  tasks:
+    - name: Require check mode for local configuration and network tests
+      ansible.builtin.assert:
+        that:
+          - ansible_check_mode
+        fail_msg: Run this test with --check so guest firewall and daemon checks stay skipped.
+
+    - name: Validate baseline inputs locally without guest access
+      ansible.builtin.include_role:
+        name: baseline
+        tasks_from: validate
+        public: true
+
+    - name: Verify both families and port-range conversion
+      ansible.builtin.assert:
+        that:
+          - baseline_firewall_rules | length == 5
+          - baseline_firewall_rules[2].source == '0.0.0.0/0'
+          - baseline_firewall_rules[2].destination == '0.0.0.0/0'
+          - baseline_firewall_rules[3].source == '::/0'
+          - baseline_firewall_rules[3].destination == '::/0'
+          - baseline_firewall_rules[4].port == '8000:8010'
+
+    - name: Verify post-hardening reboots are disabled by default
+      ansible.builtin.assert:
+        that:
+          - baseline_reboot_if_required is boolean
+          - not baseline_reboot_if_required
+
+    - name: Verify the journal-backed jail and controller exemption
+      ansible.builtin.assert:
+        that:
+          - "'backend = systemd' in baseline_test_jail"
+          - "'banaction = nftables-multiport' in baseline_test_jail"
+          - "'bantime = 600' in baseline_test_jail"
+          - "'findtime = 600' in baseline_test_jail"
+          - "'maxretry = 5' in baseline_test_jail"
+          - "'ignoreip = 127.0.0.0/8 203.0.113.20/32 ::1/128' in baseline_test_jail"
+      vars:
+        baseline_test_jail: "{{ lookup('ansible.builtin.template', baseline_templates ~ '/fail2ban.local.j2') }}"
+
+    - name: Reject policies that would lock out the controller
+      ansible.builtin.include_tasks: reject-network.yml
+      loop:
+        - ['198.51.100.20', '50000', '203.0.113.10', '22']
+        - ['203.0.113.20', '50000', '203.0.113.10', '2222']
+      loop_control:
+        loop_var: baseline_test_connection
+
+    - name: Allow explicitly opting out without requiring firewall inventory
+      ansible.builtin.include_role:
+        name: baseline
+        tasks_from: network_policy
+      vars:
+        baseline_manage_ufw: false
+        baseline_manage_fail2ban: false
+        baseline_ssh_allowed_cidrs: []
+
+    - name: Exercise UFW check mode locally without packages or firewall privileges
+      ansible.builtin.include_role:
+        name: baseline
+        tasks_from: ufw
+        apply:
+          check_mode: true
+
+    - name: Exercise fail2ban check mode locally without packages or a running daemon
+      ansible.builtin.include_role:
+        name: baseline
+        tasks_from: fail2ban
+        apply:
+          check_mode: true
+
+    - name: Render SSH policy with a non-default administrator
+      ansible.builtin.set_fact:
+        baseline_rendered_ssh: "{{ lookup('ansible.builtin.template', baseline_templates ~ '/sshd.conf.j2') }}"
+
+    - name: Verify rendered SSH directives using the effective-policy assertions
+      ansible.builtin.import_tasks: ../roles/baseline/tasks/assert_ssh.yml
+      vars:
+        baseline_sshd_effective:
+          results:
+            - item: operator
+              stdout_lines: "{{ baseline_rendered_ssh.splitlines() | map('lower') | list }}"
+
+    - name: Verify daily update configuration
+      ansible.builtin.assert:
+        that:
+          - >-
+            'APT::Periodic::Update-Package-Lists "1";' in
+            lookup('ansible.builtin.file', baseline_files ~ '/auto-upgrades.conf')
+          - >-
+            'APT::Periodic::Unattended-Upgrade "1";' in
+            lookup('ansible.builtin.file', baseline_files ~ '/auto-upgrades.conf')
+          - >-
+            lookup('ansible.builtin.file', baseline_files ~ '/unattended-upgrades.conf', rstrip=false) ==
+            'Unattended-Upgrade::Automatic-Reboot "false";\n'
+
+    - name: Verify configurable persistent journal limits
+      ansible.builtin.assert:
+        that:
+          - "'Storage=persistent' in lookup('ansible.builtin.template', baseline_templates ~ '/journald.conf.j2')"
+          - "'SystemMaxUse=128M' in lookup('ansible.builtin.template', baseline_templates ~ '/journald.conf.j2')"
+          - "'SystemKeepFree=1G' in lookup('ansible.builtin.template', baseline_templates ~ '/journald.conf.j2')"
+
+    - name: Accept journal limits overriding earlier system defaults
+      ansible.builtin.import_tasks: ../roles/baseline/tasks/assert_journal.yml
+      vars:
+        baseline_journal_effective:
+          stdout: |
+            # Earlier system defaults
+            [Journal]
+            Storage=auto
+            SystemMaxUse=4G
+            SystemKeepFree=2G
+            # Managed drop-in
+            {{ lookup('ansible.builtin.template', baseline_templates ~ '/journald.conf.j2') }}
+
+    - name: Reject unsafe effective SSH policies
+      ansible.builtin.include_tasks: reject-policy.yml
+      loop:
+        - original: permitrootlogin no
+          unsafe: permitrootlogin yes
+        - original: passwordauthentication no
+          unsafe: passwordauthentication yes
+        - original: allowusers operator
+          unsafe: allowusers operator attacker
+      loop_control:
+        loop_var: baseline_test_case
+        label: "{{ baseline_test_case.unsafe }}"

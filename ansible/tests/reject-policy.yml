@@ -1,0 +1,22 @@
+---
+- name: Expect an unsafe effective policy to fail verification
+  block:
+    - name: Check a deliberately unsafe SSH policy
+      ansible.builtin.include_tasks: ../roles/baseline/tasks/assert_ssh.yml
+      vars:
+        baseline_sshd_effective:
+          results:
+            - item: operator
+              stdout_lines: >-
+                {{ (baseline_rendered_ssh | lower | replace(baseline_test_case.original, baseline_test_case.unsafe)).splitlines() }}
+
+    - name: Fail if the unsafe policy was accepted
+      ansible.builtin.fail:
+        msg: The unsafe fixture should have failed the effective SSH assertion.
+
+  rescue:
+    - name: Confirm failure came from the SSH policy assertion
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == 'Reject overridden or ineffective SSH hardening'
+          - ansible_failed_task.action == 'ansible.builtin.assert'

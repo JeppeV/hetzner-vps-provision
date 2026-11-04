@@ -1,0 +1,10 @@
+---
+# Guard the include, not reset_connection: that meta action ignores `when`.
+- name: Reset the persistent management connection
+  ansible.builtin.meta: reset_connection
+
+- name: Verify a fresh authenticated SSH connection
+  ansible.builtin.wait_for_connection:
+    timeout: 120
+    sleep: 5
+  become: false
